@@ -28,10 +28,14 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-type StepNumber = 1 | 2 | 3 | 4 | 5
+type StepNumber = 1 | 2 | 3 | 4 | 5 | 6
 type AgentRole = 'support' | 'sales' | 'general'
 type AgentTone = 'warm' | 'clear' | 'polished'
 type AgentCapability = 'lead_capture' | 'booking' | 'human_handoff' | 'quote_request'
+type WidgetStyle = 'minimal' | 'assistant' | 'full'
+type FontStyle = 'modern' | 'classic'
+type AvatarStyle = 'sparkles' | 'message' | 'initials'
+type WidgetPlacement = 'left' | 'right'
 type KnowledgeFilter = 'all' | 'review' | 'verified'
 
 type KnowledgeItem = {
@@ -60,6 +64,17 @@ type WorkspaceDraft = {
   supportContact: string
   quotePrompt: string
   capabilitiesSaved: boolean
+  brandName: string
+  avatarMark: string
+  avatarStyle: AvatarStyle
+  accentColor: string
+  widgetPlacement: WidgetPlacement
+  widgetStyle: WidgetStyle
+  fontStyle: FontStyle
+  welcomeMessage: string
+  launcherText: string
+  suggestedQuestions: string[]
+  designSaved: boolean
   scanComplete: boolean
   knowledgeItems: KnowledgeItem[]
 }
@@ -83,6 +98,17 @@ const initialWorkspace: WorkspaceDraft = {
   supportContact: '',
   quotePrompt: 'Tell us what you need and our team will follow up with a quote.',
   capabilitiesSaved: false,
+  brandName: 'Your company',
+  avatarMark: 'AS',
+  avatarStyle: 'sparkles',
+  accentColor: '#52745B',
+  widgetPlacement: 'right',
+  widgetStyle: 'assistant',
+  fontStyle: 'modern',
+  welcomeMessage: 'How can I help you today?',
+  launcherText: 'Ask us',
+  suggestedQuestions: ['What can you help with?', 'Tell me about pricing', 'How do I contact you?'],
+  designSaved: false,
   scanComplete: false,
   knowledgeItems: [],
 }
@@ -93,6 +119,7 @@ const steps = [
   { number: 3 as const, title: 'Review knowledge', caption: 'Check what it knows' },
   { number: 4 as const, title: 'Define the agent', caption: 'Voice & boundaries' },
   { number: 5 as const, title: 'Add capabilities', caption: 'Ways it can help' },
+  { number: 6 as const, title: 'Design it', caption: 'Brand & widget' },
 ]
 
 const roles: { id: AgentRole; title: string; description: string; icon: LucideIcon }[] = [
@@ -108,6 +135,7 @@ const tones: { id: AgentTone; title: string; description: string }[] = [
 ]
 
 const supportedLanguages = ['English', 'Urdu', 'Arabic']
+const accentPalette = ['#52745B', '#397A94', '#735FA0', '#B06B4F', '#343D52']
 
 const capabilityOptions: { id: AgentCapability; title: string; description: string; icon: LucideIcon }[] = [
   { id: 'lead_capture', title: 'Collect a lead', description: 'Ask visitors for contact details and a short note.', icon: FileText },
@@ -122,10 +150,11 @@ const pageCopy: Record<StepNumber, { title: string; description: string }> = {
   3: { title: 'Review the starting knowledge.', description: 'Check every example before it becomes part of your agent’s answers.' },
   4: { title: 'Set the way your agent speaks.', description: 'Give it a role, a voice, and clear boundaries for the answers it can give.' },
   5: { title: 'Give your agent useful next steps.', description: 'Choose the ways it can help visitors move forward.' },
+  6: { title: 'Make the agent feel like yours.', description: 'Shape the widget’s look, language, and first impression.' },
 }
 
 function isStepNumber(value: unknown): value is StepNumber {
-  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6
 }
 
 function loadWorkspace(): WorkspaceDraft {
@@ -143,6 +172,12 @@ function loadWorkspace(): WorkspaceDraft {
       languages: Array.isArray(parsed.languages) ? parsed.languages.filter((language): language is string => typeof language === 'string') : initialWorkspace.languages,
       capabilities: Array.isArray(parsed.capabilities) ? parsed.capabilities.filter((capability): capability is AgentCapability => capabilityOptions.some((option) => option.id === capability)) : initialWorkspace.capabilities,
       leadFields: Array.isArray(parsed.leadFields) ? parsed.leadFields.filter((field): field is string => typeof field === 'string') : initialWorkspace.leadFields,
+      avatarStyle: parsed.avatarStyle === 'sparkles' || parsed.avatarStyle === 'message' || parsed.avatarStyle === 'initials' ? parsed.avatarStyle : initialWorkspace.avatarStyle,
+      accentColor: typeof parsed.accentColor === 'string' && /^#[\da-f]{6}$/i.test(parsed.accentColor) ? parsed.accentColor : initialWorkspace.accentColor,
+      widgetPlacement: parsed.widgetPlacement === 'left' || parsed.widgetPlacement === 'right' ? parsed.widgetPlacement : initialWorkspace.widgetPlacement,
+      widgetStyle: parsed.widgetStyle === 'minimal' || parsed.widgetStyle === 'assistant' || parsed.widgetStyle === 'full' ? parsed.widgetStyle : initialWorkspace.widgetStyle,
+      fontStyle: parsed.fontStyle === 'modern' || parsed.fontStyle === 'classic' ? parsed.fontStyle : initialWorkspace.fontStyle,
+      suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions.filter((question): question is string => typeof question === 'string').slice(0, 3) : initialWorkspace.suggestedQuestions,
       knowledgeItems: Array.isArray(parsed.knowledgeItems) ? parsed.knowledgeItems : [],
     }
   } catch {
@@ -252,11 +287,13 @@ function App() {
   function updateWorkspace<K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) {
     const behaviorChanged = key === 'role' || key === 'tone' || key === 'languages' || key === 'instructions' || key === 'boundaries'
     const capabilitiesChanged = key === 'capabilities' || key === 'leadFields' || key === 'bookingUrl' || key === 'supportContact' || key === 'quotePrompt'
+    const appearanceChanged = key === 'brandName' || key === 'avatarMark' || key === 'avatarStyle' || key === 'accentColor' || key === 'widgetPlacement' || key === 'widgetStyle' || key === 'fontStyle' || key === 'welcomeMessage' || key === 'launcherText' || key === 'suggestedQuestions'
     setWorkspace((current) => ({
       ...current,
       [key]: value,
       ...(behaviorChanged ? { agentProfileSaved: false, capabilitiesSaved: false } : {}),
       ...(capabilitiesChanged ? { capabilitiesSaved: false } : {}),
+      ...(appearanceChanged ? { designSaved: false } : {}),
     }))
   }
 
@@ -307,6 +344,7 @@ function App() {
       || (step === 3 && workspace.scanComplete)
       || (step === 4 && workspace.furthestStep >= 4)
       || (step === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
+      || (step === 6 && workspace.capabilitiesSaved && workspace.furthestStep >= 6)
     if (available) navigateToStep(step)
   }
 
@@ -325,14 +363,22 @@ function App() {
     event.preventDefault()
     setWorkspace((current) => ({
       ...current,
+      currentStep: 6,
+      furthestStep: 6,
       capabilitiesSaved: true,
     }))
-    setNotice('Capabilities saved to your draft.')
+    setNotice('Capabilities saved. Design your agent next.')
   }
 
   function skipCapabilities() {
-    setWorkspace((current) => ({ ...current, capabilitiesSaved: true }))
-    setNotice('Capabilities skipped for now.')
+    setWorkspace((current) => ({ ...current, currentStep: 6, furthestStep: 6, capabilitiesSaved: true }))
+    setNotice('Capabilities skipped. You can add them later.')
+  }
+
+  function saveDesign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setWorkspace((current) => ({ ...current, designSaved: true }))
+    setNotice('Appearance saved to your draft.')
   }
 
   function addFaq(event: FormEvent<HTMLFormElement>) {
@@ -511,6 +557,9 @@ function App() {
                   skipCapabilities={skipCapabilities}
                 />
               )}
+              {currentStep === 6 && (
+                <AppearancePanel workspace={workspace} updateWorkspace={updateWorkspace} saveDesign={saveDesign} />
+              )}
             </section>
 
             <aside className="secondary-column">
@@ -553,6 +602,9 @@ function Sidebar({ currentStep, furthestStep, selectStep, knowledgeCount }: { cu
         <button className={`nav-item ${currentStep === 5 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 5} onClick={() => selectStep(5)}>
           <CheckCircle2 size={17} /><span>Capabilities</span><span className="nav-count">{furthestStep >= 5 ? 'Ready' : '—'}</span>
         </button>
+        <button className={`nav-item ${currentStep === 6 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 6} onClick={() => selectStep(6)}>
+          <Sparkles size={17} /><span>Appearance</span><span className="nav-count">{furthestStep >= 6 ? 'Ready' : '—'}</span>
+        </button>
       </nav>
 
       <div className="sidebar-section-label operate-label">OPERATE</div>
@@ -592,7 +644,7 @@ function Topbar({ website }: { website: string }) {
 
 function StepNavigation({ currentStep, workspace, selectStep }: { currentStep: StepNumber; workspace: WorkspaceDraft; selectStep: (step: StepNumber) => void }) {
   return (
-    <div className="stepper-card" aria-label="Agent setup steps">
+    <div className={`stepper-card ${steps.length > 4 ? 'extended-stepper' : ''}`} aria-label="Agent setup steps">
       {steps.map((step, index) => {
         const complete = step.number < currentStep
         const active = step.number === currentStep
@@ -601,6 +653,7 @@ function StepNavigation({ currentStep, workspace, selectStep }: { currentStep: S
           || (step.number === 3 && workspace.scanComplete)
           || (step.number === 4 && workspace.furthestStep >= 4)
           || (step.number === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
+          || (step.number === 6 && workspace.capabilitiesSaved && workspace.furthestStep >= 6)
         return (
           <div className="stepper-part" key={step.number}>
             <button
@@ -1079,32 +1132,142 @@ function CapabilitiesPanel({
   )
 }
 
+function AppearancePanel({
+  workspace,
+  updateWorkspace,
+  saveDesign,
+}: {
+  workspace: WorkspaceDraft
+  updateWorkspace: <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => void
+  saveDesign: (event: FormEvent<HTMLFormElement>) => void
+}) {
+  const widgetStyles: { id: WidgetStyle; title: string; description: string }[] = [
+    { id: 'minimal', title: 'Minimal', description: 'A compact, simple chat entry.' },
+    { id: 'assistant', title: 'Assistant', description: 'A friendly branded conversation.' },
+    { id: 'full', title: 'Full experience', description: 'A more open, roomy chat panel.' },
+  ]
+  const avatarStyles: { id: AvatarStyle; title: string }[] = [
+    { id: 'sparkles', title: 'Spark' },
+    { id: 'message', title: 'Message' },
+    { id: 'initials', title: 'Initials' },
+  ]
+
+  return (
+    <div className="panel-card appearance-panel">
+      <div className="card-topline">
+        <span className="section-kicker"><span className="kicker-number">06</span> APPEARANCE</span>
+        {workspace.designSaved && <span className="sample-status"><CheckCircle2 size={14} /> Draft saved</span>}
+      </div>
+      <h2>Make this agent feel like part of your team.</h2>
+      <p className="panel-intro">Set the widget’s brand, voice, and first impression. The preview changes as you edit.</p>
+
+      <div className="prototype-note appearance-disclaimer"><div className="note-icon"><Sparkles size={15} /></div><p><strong>Preview only.</strong> These settings stay in this browser. The widget has not been published to a website.</p></div>
+
+      <form className="appearance-form" onSubmit={saveDesign}>
+        <section className="appearance-section" aria-labelledby="appearance-brand-title">
+          <div className="appearance-section-heading"><span className="appearance-section-icon"><Bot size={15} /></span><div><strong id="appearance-brand-title">Brand basics</strong><small>Name, avatar, and accent color</small></div></div>
+          <label className="field-label" htmlFor="brand-name">Company name in the widget</label>
+          <input id="brand-name" className="plain-input" type="text" maxLength={48} value={workspace.brandName} onChange={(event) => updateWorkspace('brandName', event.target.value)} placeholder="Your company" />
+
+          <div className="appearance-subsection">
+            <span className="field-label">Avatar style</span>
+            <div className="avatar-options">
+              {avatarStyles.map((avatar) => (
+                <button key={avatar.id} className={`avatar-option ${workspace.avatarStyle === avatar.id ? 'selected' : ''}`} type="button" aria-pressed={workspace.avatarStyle === avatar.id} onClick={() => updateWorkspace('avatarStyle', avatar.id)}>
+                  <span className="avatar-option-mark">{avatar.id === 'sparkles' ? <Sparkles size={15} /> : avatar.id === 'message' ? <MessageCircle size={15} /> : <span>{(workspace.avatarMark || 'AS').slice(0, 2).toUpperCase()}</span>}</span>
+                  <span>{avatar.title}</span>
+                </button>
+              ))}
+            </div>
+            {workspace.avatarStyle === 'initials' && <label className="avatar-mark-field"><span className="field-label">Avatar letters</span><input className="plain-input" type="text" maxLength={3} value={workspace.avatarMark} onChange={(event) => updateWorkspace('avatarMark', event.target.value.toUpperCase())} placeholder="AS" /></label>}
+          </div>
+
+          <div className="appearance-subsection">
+            <span className="field-label">Accent color</span>
+            <div className="color-options" role="group" aria-label="Accent color presets">
+              {accentPalette.map((color) => <button key={color} className={`color-option ${workspace.accentColor.toLowerCase() === color.toLowerCase() ? 'selected' : ''}`} type="button" style={{ backgroundColor: color }} aria-label={`Use ${color} accent color`} aria-pressed={workspace.accentColor.toLowerCase() === color.toLowerCase()} onClick={() => updateWorkspace('accentColor', color)} />)}
+              <label className="custom-color-option"><input type="color" aria-label="Choose a custom accent color" value={workspace.accentColor} onChange={(event) => updateWorkspace('accentColor', event.target.value)} /><span>Custom</span></label>
+            </div>
+          </div>
+        </section>
+
+        <section className="appearance-section" aria-labelledby="appearance-widget-title">
+          <div className="appearance-section-heading"><span className="appearance-section-icon"><MessageCircle size={15} /></span><div><strong id="appearance-widget-title">Widget style</strong><small>Choose a starting layout and position</small></div></div>
+          <div className="widget-style-options">
+            {widgetStyles.map((style) => <button key={style.id} className={`widget-style-option ${workspace.widgetStyle === style.id ? 'selected' : ''}`} type="button" aria-pressed={workspace.widgetStyle === style.id} onClick={() => updateWorkspace('widgetStyle', style.id)}><span className={`widget-style-art art-${style.id}`}><i /><i /><i /></span><strong>{style.title}</strong><small>{style.description}</small></button>)}
+          </div>
+          <div className="appearance-inline-fields">
+            <fieldset className="appearance-choice-fieldset">
+              <legend className="field-label">Launcher position</legend>
+              <div className="segmented-options">
+                {(['right', 'left'] as const).map((placement) => <button key={placement} className={workspace.widgetPlacement === placement ? 'selected' : ''} type="button" aria-pressed={workspace.widgetPlacement === placement} onClick={() => updateWorkspace('widgetPlacement', placement)}>{placement === 'right' ? 'Bottom right' : 'Bottom left'}</button>)}
+              </div>
+            </fieldset>
+            <fieldset className="appearance-choice-fieldset">
+              <legend className="field-label">Font feel</legend>
+              <div className="segmented-options">
+                {(['modern', 'classic'] as const).map((font) => <button key={font} className={workspace.fontStyle === font ? 'selected' : ''} type="button" aria-pressed={workspace.fontStyle === font} onClick={() => updateWorkspace('fontStyle', font)}>{font === 'modern' ? 'Modern' : 'Classic'}</button>)}
+              </div>
+            </fieldset>
+          </div>
+        </section>
+
+        <section className="appearance-section" aria-labelledby="appearance-copy-title">
+          <div className="appearance-section-heading"><span className="appearance-section-icon"><Languages size={15} /></span><div><strong id="appearance-copy-title">Welcome and suggestions</strong><small>Write what visitors see first</small></div></div>
+          <label className="field-label" htmlFor="launcher-text">Launcher label</label>
+          <input id="launcher-text" className="plain-input" type="text" maxLength={24} value={workspace.launcherText} onChange={(event) => updateWorkspace('launcherText', event.target.value)} placeholder="Ask us" />
+          <label className="field-label appearance-label-spaced" htmlFor="welcome-message">Welcome message</label>
+          <textarea id="welcome-message" className="plain-input behavior-textarea" rows={2} maxLength={180} value={workspace.welcomeMessage} onChange={(event) => updateWorkspace('welcomeMessage', event.target.value)} />
+          <div className="suggested-question-editor">
+            <span className="field-label">Suggested questions</span>
+            {workspace.suggestedQuestions.map((question, index) => <label className="suggested-question-field" key={`question-${index}`}><span>{index + 1}</span><input className="plain-input" type="text" maxLength={70} value={question} aria-label={`Suggested question ${index + 1}`} onChange={(event) => updateWorkspace('suggestedQuestions', workspace.suggestedQuestions.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /></label>)}
+          </div>
+        </section>
+
+        <div className="form-footer appearance-footer">
+          <div className="privacy-note"><ShieldCheck size={16} /><span>Saved in this browser. Not published.</span></div>
+          <button className="button-primary" type="submit">Save appearance <Check size={16} /></button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return <button className={`filter-tab ${active ? 'active' : ''}`} type="button" role="tab" aria-selected={active} onClick={onClick}>{children}</button>
+}
+
+function PreviewAvatar({ style, mark, small = false }: { style: AvatarStyle; mark: string; small?: boolean }) {
+  if (style === 'message') return <MessageCircle size={small ? 11 : 15} />
+  if (style === 'initials') return <span>{mark.slice(0, 3)}</span>
+  return <Sparkles size={small ? 11 : 15} />
 }
 
 function AgentPreview({ workspace, currentStep }: { workspace: WorkspaceDraft; currentStep: StepNumber }) {
   const roleLabel = roles.find((role) => role.id === workspace.role)?.title.toLowerCase() ?? 'assistant'
   const agentName = workspace.agentName.trim() || 'Your front desk'
+  const brandName = workspace.brandName.trim() || (workspace.website ? hostFromUrl(workspace.website).split('.')[0] : 'Your company')
+  const avatarMark = workspace.avatarMark.trim() || brandName.slice(0, 2).toUpperCase()
+
   return (
     <div className="preview-card">
       <div className="preview-card-header"><div><span className="aside-kicker">A FIRST LOOK</span><h3>Your agent, taking shape</h3></div><div className="preview-window-icon"><Bot size={18} /></div></div>
       <div className="browser-frame">
         <div className="browser-toolbar"><div className="browser-dots"><i /><i /><i /></div><div className="browser-address"><LockKeyhole size={10} />{hostFromUrl(workspace.website)}</div><span className="browser-menu-dots">•••</span></div>
-        <div className="browser-page">
-          <div className="site-header"><div className="site-logo"><span className="site-logo-mark"><Sparkles size={11} /></span><span>{workspace.website ? hostFromUrl(workspace.website).split('.')[0] : 'your company'}</span></div><div className="site-links"><i /><i /><i /></div></div>
+        <div className={`browser-page placement-${workspace.widgetPlacement}`}>
+          <div className="site-header"><div className="site-logo"><span className="site-logo-mark" style={{ backgroundColor: workspace.accentColor }}><PreviewAvatar style={workspace.avatarStyle} mark={avatarMark} small /></span><span>{brandName}</span></div><div className="site-links"><i /><i /><i /></div></div>
           <div className="site-hero"><span className="site-demo-label">WEBSITE PREVIEW</span><div className="hero-title-line long" /><div className="hero-title-line" /><div className="hero-copy-line" /><div className="hero-copy-line short" /><div className="hero-cta-line" /></div>
-          <div className="widget-launcher"><MessageCircle size={17} /><span>Ask {workspace.website ? hostFromUrl(workspace.website).split('.')[0] : 'us'}</span></div>
+          <div className="widget-launcher" style={{ backgroundColor: workspace.accentColor }}><PreviewAvatar style={workspace.avatarStyle} mark={avatarMark} small /><span>{workspace.launcherText.trim() || 'Ask us'}</span></div>
         </div>
       </div>
-      <div className="assistant-preview">
-        <div className="assistant-header"><div className="assistant-avatar"><Sparkles size={15} /></div><div><strong>{agentName}</strong><span><i /> Here to help</span></div><div className="assistant-more">···</div></div>
-        <div className="assistant-message"><span className="message-time">A MOMENT AGO</span><p>Hi there! I’m {agentName}. I’m here to help with your {roleLabel} questions.</p></div>
-        <div className="suggestion-row"><span>What can you help with?</span><ChevronRight size={13} /></div>
+      <div className={`assistant-preview widget-${workspace.widgetStyle} font-${workspace.fontStyle}`}>
+        <div className="assistant-header"><div className="assistant-avatar" style={{ backgroundColor: workspace.accentColor }}><PreviewAvatar style={workspace.avatarStyle} mark={avatarMark} /></div><div><strong>{agentName}</strong><span><i /> {brandName}</span></div><div className="assistant-more">···</div></div>
+        <div className="assistant-message"><span className="message-time">A MOMENT AGO</span><p>Hi there! I’m {agentName}. {workspace.welcomeMessage.trim() || `I’m here to help with your ${roleLabel} questions.`}</p></div>
+        <div className="suggestion-list">{workspace.suggestedQuestions.filter((question) => question.trim()).map((question, index) => <div className="suggestion-row" key={`${question}-${index}`}><span>{question}</span><ChevronRight size={13} /></div>)}</div>
         <div className="chat-input-preview"><span>Ask me anything...</span><div><ArrowRight size={13} /></div></div>
         <div className="preview-disclaimer"><Sparkles size={12} /> Example preview · no live AI connected</div>
       </div>
-      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : currentStep === 4 ? `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.` : 'Capabilities are draft settings. No external actions are connected.'}</span></div>
+      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : currentStep === 4 ? `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.` : currentStep === 5 ? 'Capabilities are draft settings. No external actions are connected.' : 'Appearance changes update this sample preview only. Nothing is published.'}</span></div>
     </div>
   )
 }
@@ -1115,12 +1278,14 @@ function SetupChecklist({ workspace, completedReviews }: { workspace: WorkspaceD
   const knowledgeReady = workspace.knowledgeItems.length > 0 && completedReviews === workspace.knowledgeItems.length
   const behaviorReady = workspace.agentProfileSaved
   const capabilitiesReady = workspace.capabilitiesSaved
+  const designReady = workspace.designSaved
   const rows = [
     { title: 'Company details', detail: websiteAdded ? hostFromUrl(workspace.website) : 'Add your website', done: websiteAdded },
     { title: 'Sample discovery', detail: scanReady ? 'Preview ready' : 'Waiting for website', done: scanReady },
     { title: 'Knowledge review', detail: knowledgeReady ? 'All items verified' : workspace.knowledgeItems.length ? `${completedReviews} of ${workspace.knowledgeItems.length} verified` : 'Review sample content', done: knowledgeReady },
     { title: 'Agent behavior', detail: behaviorReady ? 'Profile saved' : 'Set voice and boundaries', done: behaviorReady },
     { title: 'Capabilities', detail: capabilitiesReady ? `${workspace.capabilities.length} enabled · draft only` : 'Optional · not configured', done: capabilitiesReady },
+    { title: 'Appearance', detail: designReady ? 'Design saved' : 'Set brand and widget', done: designReady },
   ]
   return (
     <div className="checklist-card">
