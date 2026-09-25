@@ -28,9 +28,10 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-type StepNumber = 1 | 2 | 3 | 4
+type StepNumber = 1 | 2 | 3 | 4 | 5
 type AgentRole = 'support' | 'sales' | 'general'
 type AgentTone = 'warm' | 'clear' | 'polished'
+type AgentCapability = 'lead_capture' | 'booking' | 'human_handoff' | 'quote_request'
 type KnowledgeFilter = 'all' | 'review' | 'verified'
 
 type KnowledgeItem = {
@@ -53,6 +54,12 @@ type WorkspaceDraft = {
   instructions: string
   boundaries: string
   agentProfileSaved: boolean
+  capabilities: AgentCapability[]
+  leadFields: string[]
+  bookingUrl: string
+  supportContact: string
+  quotePrompt: string
+  capabilitiesSaved: boolean
   scanComplete: boolean
   knowledgeItems: KnowledgeItem[]
 }
@@ -70,6 +77,12 @@ const initialWorkspace: WorkspaceDraft = {
   instructions: 'Be helpful, concise, and grounded in the company information that has been reviewed.',
   boundaries: 'Do not invent prices, policies, availability, or promises. Say when you do not know.',
   agentProfileSaved: false,
+  capabilities: [],
+  leadFields: ['Name', 'Email'],
+  bookingUrl: '',
+  supportContact: '',
+  quotePrompt: 'Tell us what you need and our team will follow up with a quote.',
+  capabilitiesSaved: false,
   scanComplete: false,
   knowledgeItems: [],
 }
@@ -79,6 +92,7 @@ const steps = [
   { number: 2 as const, title: 'Scan your company', caption: 'Preview discovery' },
   { number: 3 as const, title: 'Review knowledge', caption: 'Check what it knows' },
   { number: 4 as const, title: 'Define the agent', caption: 'Voice & boundaries' },
+  { number: 5 as const, title: 'Add capabilities', caption: 'Ways it can help' },
 ]
 
 const roles: { id: AgentRole; title: string; description: string; icon: LucideIcon }[] = [
@@ -95,15 +109,23 @@ const tones: { id: AgentTone; title: string; description: string }[] = [
 
 const supportedLanguages = ['English', 'Urdu', 'Arabic']
 
+const capabilityOptions: { id: AgentCapability; title: string; description: string; icon: LucideIcon }[] = [
+  { id: 'lead_capture', title: 'Collect a lead', description: 'Ask visitors for contact details and a short note.', icon: FileText },
+  { id: 'booking', title: 'Book a meeting', description: 'Point visitors to your scheduling page.', icon: CheckCircle2 },
+  { id: 'human_handoff', title: 'Contact support', description: 'Show a support contact when a person should help.', icon: Headphones },
+  { id: 'quote_request', title: 'Request a quote', description: 'Collect what a visitor needs for a follow-up quote.', icon: MessageCircle },
+]
+
 const pageCopy: Record<StepNumber, { title: string; description: string }> = {
   1: { title: 'Give your website a front desk.', description: 'Start with your website. We’ll guide you through the first draft of your company agent.' },
   2: { title: 'Let’s see what your company knows.', description: 'See how company discovery will work, then preview the knowledge your agent can use.' },
   3: { title: 'Review the starting knowledge.', description: 'Check every example before it becomes part of your agent’s answers.' },
   4: { title: 'Set the way your agent speaks.', description: 'Give it a role, a voice, and clear boundaries for the answers it can give.' },
+  5: { title: 'Give your agent useful next steps.', description: 'Choose the ways it can help visitors move forward.' },
 }
 
 function isStepNumber(value: unknown): value is StepNumber {
-  return value === 1 || value === 2 || value === 3 || value === 4
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5
 }
 
 function loadWorkspace(): WorkspaceDraft {
@@ -119,6 +141,8 @@ function loadWorkspace(): WorkspaceDraft {
       currentStep,
       furthestStep,
       languages: Array.isArray(parsed.languages) ? parsed.languages.filter((language): language is string => typeof language === 'string') : initialWorkspace.languages,
+      capabilities: Array.isArray(parsed.capabilities) ? parsed.capabilities.filter((capability): capability is AgentCapability => capabilityOptions.some((option) => option.id === capability)) : initialWorkspace.capabilities,
+      leadFields: Array.isArray(parsed.leadFields) ? parsed.leadFields.filter((field): field is string => typeof field === 'string') : initialWorkspace.leadFields,
       knowledgeItems: Array.isArray(parsed.knowledgeItems) ? parsed.knowledgeItems : [],
     }
   } catch {
@@ -226,7 +250,14 @@ function App() {
   }, [notice])
 
   function updateWorkspace<K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) {
-    setWorkspace((current) => ({ ...current, [key]: value }))
+    const behaviorChanged = key === 'role' || key === 'tone' || key === 'languages' || key === 'instructions' || key === 'boundaries'
+    const capabilitiesChanged = key === 'capabilities' || key === 'leadFields' || key === 'bookingUrl' || key === 'supportContact' || key === 'quotePrompt'
+    setWorkspace((current) => ({
+      ...current,
+      [key]: value,
+      ...(behaviorChanged ? { agentProfileSaved: false, capabilitiesSaved: false } : {}),
+      ...(capabilitiesChanged ? { capabilitiesSaved: false } : {}),
+    }))
   }
 
   function navigateToStep(step: StepNumber) {
@@ -251,6 +282,7 @@ function App() {
         currentStep: 2,
         furthestStep: 2,
         agentProfileSaved: false,
+        capabilitiesSaved: false,
         scanComplete: false,
         knowledgeItems: [],
       }))
@@ -274,13 +306,33 @@ function App() {
       || (step === 2 && Boolean(workspace.website))
       || (step === 3 && workspace.scanComplete)
       || (step === 4 && workspace.furthestStep >= 4)
+      || (step === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
     if (available) navigateToStep(step)
   }
 
   function saveAgentProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setWorkspace((current) => ({ ...current, agentProfileSaved: true }))
-    setNotice('Agent behavior saved to your draft.')
+    setWorkspace((current) => ({
+      ...current,
+      currentStep: 5,
+      furthestStep: Math.max(current.furthestStep, 5) as StepNumber,
+      agentProfileSaved: true,
+    }))
+    setNotice('Agent behavior saved. Choose its capabilities next.')
+  }
+
+  function saveCapabilities(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setWorkspace((current) => ({
+      ...current,
+      capabilitiesSaved: true,
+    }))
+    setNotice('Capabilities saved to your draft.')
+  }
+
+  function skipCapabilities() {
+    setWorkspace((current) => ({ ...current, capabilitiesSaved: true }))
+    setNotice('Capabilities skipped for now.')
   }
 
   function addFaq(event: FormEvent<HTMLFormElement>) {
@@ -451,6 +503,14 @@ function App() {
                   saveAgentProfile={saveAgentProfile}
                 />
               )}
+              {currentStep === 5 && (
+                <CapabilitiesPanel
+                  workspace={workspace}
+                  updateWorkspace={updateWorkspace}
+                  saveCapabilities={saveCapabilities}
+                  skipCapabilities={skipCapabilities}
+                />
+              )}
             </section>
 
             <aside className="secondary-column">
@@ -489,6 +549,9 @@ function Sidebar({ currentStep, furthestStep, selectStep, knowledgeCount }: { cu
         </button>
         <button className={`nav-item ${currentStep === 4 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 4} onClick={() => selectStep(4)}>
           <Bot size={17} /><span>Agent behavior</span><span className="nav-count">{furthestStep >= 4 ? 'Ready' : '—'}</span>
+        </button>
+        <button className={`nav-item ${currentStep === 5 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 5} onClick={() => selectStep(5)}>
+          <CheckCircle2 size={17} /><span>Capabilities</span><span className="nav-count">{furthestStep >= 5 ? 'Ready' : '—'}</span>
         </button>
       </nav>
 
@@ -537,6 +600,7 @@ function StepNavigation({ currentStep, workspace, selectStep }: { currentStep: S
           || (step.number === 2 && Boolean(workspace.website))
           || (step.number === 3 && workspace.scanComplete)
           || (step.number === 4 && workspace.furthestStep >= 4)
+          || (step.number === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
         return (
           <div className="stepper-part" key={step.number}>
             <button
@@ -923,7 +987,92 @@ function AgentDefinitionPanel({
 
         <div className="form-footer">
           <div className="privacy-note"><ShieldCheck size={16} /><span>Saved to this browser’s draft.</span></div>
-          <button className="button-primary" type="submit">Save agent profile <ArrowRight size={16} /></button>
+          <button className="button-primary" type="submit">Save and add capabilities <ArrowRight size={16} /></button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function CapabilitiesPanel({
+  workspace,
+  updateWorkspace,
+  saveCapabilities,
+  skipCapabilities,
+}: {
+  workspace: WorkspaceDraft
+  updateWorkspace: <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => void
+  saveCapabilities: (event: FormEvent<HTMLFormElement>) => void
+  skipCapabilities: () => void
+}) {
+  const selected = (id: AgentCapability) => workspace.capabilities.includes(id)
+
+  function toggleCapability(id: AgentCapability) {
+    updateWorkspace('capabilities', selected(id) ? workspace.capabilities.filter((item) => item !== id) : [...workspace.capabilities, id])
+  }
+
+  function toggleLeadField(field: string) {
+    updateWorkspace('leadFields', workspace.leadFields.includes(field) ? workspace.leadFields.filter((item) => item !== field) : [...workspace.leadFields, field])
+  }
+
+  return (
+    <div className="panel-card capabilities-panel">
+      <div className="card-topline">
+        <span className="section-kicker"><span className="kicker-number">05</span> CAPABILITIES</span>
+        <span className="time-estimate">Optional · About 2 minutes</span>
+      </div>
+      <h2>Choose what your agent can help with.</h2>
+      <p className="panel-intro">Turn on the follow-up paths that fit your business. You can add more later.</p>
+
+      <div className="prototype-note capability-disclaimer"><div className="note-icon"><ShieldCheck size={15} /></div><p><strong>Draft settings only.</strong> This prototype does not collect visitor data, book meetings, send messages, call APIs, or connect to a CRM.</p></div>
+
+      <form className="capabilities-form" onSubmit={saveCapabilities}>
+        <div className="capability-options">
+          {capabilityOptions.map(({ id, title, description, icon: Icon }) => (
+            <button key={id} className={`capability-option ${selected(id) ? 'selected' : ''}`} type="button" onClick={() => toggleCapability(id)} aria-pressed={selected(id)}>
+              <span className="capability-icon"><Icon size={17} /></span>
+              <span className="capability-copy"><strong>{title}</strong><small>{description}</small></span>
+              <span className="capability-check">{selected(id) && <Check size={13} />}</span>
+            </button>
+          ))}
+        </div>
+
+        {selected('lead_capture') && (
+          <section className="capability-config" aria-labelledby="lead-config-title">
+            <div className="capability-config-heading"><div><span className="config-step">01</span><strong id="lead-config-title">Lead details to request</strong></div><span>Choose fields</span></div>
+            <div className="lead-field-options">
+              {['Name', 'Email', 'Company', 'What they need'].map((field) => <label className="lead-field-option" key={field}><input type="checkbox" checked={workspace.leadFields.includes(field)} onChange={() => toggleLeadField(field)} />{field}</label>)}
+            </div>
+          </section>
+        )}
+
+        {selected('booking') && (
+          <section className="capability-config" aria-labelledby="booking-config-title">
+            <div className="capability-config-heading"><div><span className="config-step">02</span><strong id="booking-config-title">Scheduling page</strong></div><span>Optional</span></div>
+            <label className="visually-hidden" htmlFor="booking-url">Scheduling page URL</label>
+            <input id="booking-url" className="plain-input" type="url" value={workspace.bookingUrl} onChange={(event) => updateWorkspace('bookingUrl', event.target.value)} placeholder="https://calendly.com/your-team" />
+          </section>
+        )}
+
+        {selected('human_handoff') && (
+          <section className="capability-config" aria-labelledby="support-config-title">
+            <div className="capability-config-heading"><div><span className="config-step">03</span><strong id="support-config-title">Support contact</strong></div><span>Email or URL</span></div>
+            <label className="visually-hidden" htmlFor="support-contact">Support email or contact page</label>
+            <input id="support-contact" className="plain-input" type="text" value={workspace.supportContact} onChange={(event) => updateWorkspace('supportContact', event.target.value)} placeholder="help@yourcompany.com" />
+          </section>
+        )}
+
+        {selected('quote_request') && (
+          <section className="capability-config" aria-labelledby="quote-config-title">
+            <div className="capability-config-heading"><div><span className="config-step">04</span><strong id="quote-config-title">Quote request prompt</strong></div><span>Shown to visitors</span></div>
+            <label className="visually-hidden" htmlFor="quote-prompt">Quote request prompt</label>
+            <textarea id="quote-prompt" className="plain-input behavior-textarea" rows={2} maxLength={300} value={workspace.quotePrompt} onChange={(event) => updateWorkspace('quotePrompt', event.target.value)} />
+          </section>
+        )}
+
+        <div className="capabilities-footer">
+          <button className="text-button skip-capabilities" type="button" onClick={skipCapabilities}>Skip for now</button>
+          <button className="button-primary" type="submit">Save capabilities <ArrowRight size={16} /></button>
         </div>
       </form>
     </div>
@@ -955,7 +1104,7 @@ function AgentPreview({ workspace, currentStep }: { workspace: WorkspaceDraft; c
         <div className="chat-input-preview"><span>Ask me anything...</span><div><ArrowRight size={13} /></div></div>
         <div className="preview-disclaimer"><Sparkles size={12} /> Example preview · no live AI connected</div>
       </div>
-      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.`}</span></div>
+      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : currentStep === 4 ? `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.` : 'Capabilities are draft settings. No external actions are connected.'}</span></div>
     </div>
   )
 }
@@ -965,11 +1114,13 @@ function SetupChecklist({ workspace, completedReviews }: { workspace: WorkspaceD
   const scanReady = workspace.scanComplete
   const knowledgeReady = workspace.knowledgeItems.length > 0 && completedReviews === workspace.knowledgeItems.length
   const behaviorReady = workspace.agentProfileSaved
+  const capabilitiesReady = workspace.capabilitiesSaved
   const rows = [
     { title: 'Company details', detail: websiteAdded ? hostFromUrl(workspace.website) : 'Add your website', done: websiteAdded },
     { title: 'Sample discovery', detail: scanReady ? 'Preview ready' : 'Waiting for website', done: scanReady },
     { title: 'Knowledge review', detail: knowledgeReady ? 'All items verified' : workspace.knowledgeItems.length ? `${completedReviews} of ${workspace.knowledgeItems.length} verified` : 'Review sample content', done: knowledgeReady },
     { title: 'Agent behavior', detail: behaviorReady ? 'Profile saved' : 'Set voice and boundaries', done: behaviorReady },
+    { title: 'Capabilities', detail: capabilitiesReady ? `${workspace.capabilities.length} enabled · draft only` : 'Optional · not configured', done: capabilitiesReady },
   ]
   return (
     <div className="checklist-card">
