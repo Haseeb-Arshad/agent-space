@@ -28,7 +28,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-type StepNumber = 1 | 2 | 3 | 4 | 5 | 6
+type StepNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 type AgentRole = 'support' | 'sales' | 'general'
 type AgentTone = 'warm' | 'clear' | 'polished'
 type AgentCapability = 'lead_capture' | 'booking' | 'human_handoff' | 'quote_request'
@@ -36,7 +36,16 @@ type WidgetStyle = 'minimal' | 'assistant' | 'full'
 type FontStyle = 'modern' | 'classic'
 type AvatarStyle = 'sparkles' | 'message' | 'initials'
 type WidgetPlacement = 'left' | 'right'
+type InstallMethod = 'script' | 'wordpress' | 'shopify' | 'api'
 type KnowledgeFilter = 'all' | 'review' | 'verified'
+
+type TestMessage = {
+  id: string
+  role: 'visitor' | 'agent'
+  text: string
+  citation?: Pick<KnowledgeItem, 'title' | 'source'>
+  fallback?: boolean
+}
 
 type KnowledgeItem = {
   id: string
@@ -75,6 +84,10 @@ type WorkspaceDraft = {
   launcherText: string
   suggestedQuestions: string[]
   designSaved: boolean
+  testRunCount: number
+  allowedDomains: string[]
+  installMethod: InstallMethod
+  publishSetupSaved: boolean
   scanComplete: boolean
   knowledgeItems: KnowledgeItem[]
 }
@@ -109,6 +122,10 @@ const initialWorkspace: WorkspaceDraft = {
   launcherText: 'Ask us',
   suggestedQuestions: ['What can you help with?', 'Tell me about pricing', 'How do I contact you?'],
   designSaved: false,
+  testRunCount: 0,
+  allowedDomains: [],
+  installMethod: 'script',
+  publishSetupSaved: false,
   scanComplete: false,
   knowledgeItems: [],
 }
@@ -120,6 +137,8 @@ const steps = [
   { number: 4 as const, title: 'Define the agent', caption: 'Voice & boundaries' },
   { number: 5 as const, title: 'Add capabilities', caption: 'Ways it can help' },
   { number: 6 as const, title: 'Design it', caption: 'Brand & widget' },
+  { number: 7 as const, title: 'Test', caption: 'Try real questions' },
+  { number: 8 as const, title: 'Publish', caption: 'Prepare installation' },
 ]
 
 const roles: { id: AgentRole; title: string; description: string; icon: LucideIcon }[] = [
@@ -151,10 +170,12 @@ const pageCopy: Record<StepNumber, { title: string; description: string }> = {
   4: { title: 'Set the way your agent speaks.', description: 'Give it a role, a voice, and clear boundaries for the answers it can give.' },
   5: { title: 'Give your agent useful next steps.', description: 'Choose the ways it can help visitors move forward.' },
   6: { title: 'Make the agent feel like yours.', description: 'Shape the widget’s look, language, and first impression.' },
+  7: { title: 'Try the questions your visitors ask.', description: 'See which approved draft knowledge matches a question and where the agent needs more information.' },
+  8: { title: 'Prepare your installation.', description: 'Choose a channel and allowed domains, then copy an implementation template for a future live setup.' },
 }
 
 function isStepNumber(value: unknown): value is StepNumber {
-  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6 || value === 7 || value === 8
 }
 
 function loadWorkspace(): WorkspaceDraft {
@@ -178,6 +199,9 @@ function loadWorkspace(): WorkspaceDraft {
       widgetStyle: parsed.widgetStyle === 'minimal' || parsed.widgetStyle === 'assistant' || parsed.widgetStyle === 'full' ? parsed.widgetStyle : initialWorkspace.widgetStyle,
       fontStyle: parsed.fontStyle === 'modern' || parsed.fontStyle === 'classic' ? parsed.fontStyle : initialWorkspace.fontStyle,
       suggestedQuestions: Array.isArray(parsed.suggestedQuestions) ? parsed.suggestedQuestions.filter((question): question is string => typeof question === 'string').slice(0, 3) : initialWorkspace.suggestedQuestions,
+      testRunCount: typeof parsed.testRunCount === 'number' && Number.isFinite(parsed.testRunCount) ? Math.max(0, parsed.testRunCount) : initialWorkspace.testRunCount,
+      allowedDomains: Array.isArray(parsed.allowedDomains) ? parsed.allowedDomains.filter((domain): domain is string => typeof domain === 'string') : initialWorkspace.allowedDomains,
+      installMethod: parsed.installMethod === 'script' || parsed.installMethod === 'wordpress' || parsed.installMethod === 'shopify' || parsed.installMethod === 'api' ? parsed.installMethod : initialWorkspace.installMethod,
       knowledgeItems: Array.isArray(parsed.knowledgeItems) ? parsed.knowledgeItems : [],
     }
   } catch {
@@ -236,6 +260,61 @@ function sampleKnowledge(website: string): KnowledgeItem[] {
   ]
 }
 
+function findLocalTestAnswer(question: string, knowledgeItems: KnowledgeItem[]): Omit<TestMessage, 'id' | 'role'> {
+  const ignoredWords = new Set(['about', 'after', 'could', 'does', 'from', 'have', 'help', 'into', 'that', 'their', 'there', 'this', 'what', 'when', 'where', 'which', 'with', 'your'])
+  const queryWords = [...new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((word) => !ignoredWords.has(word)))]
+  const matches = knowledgeItems
+    .filter((item) => item.verified)
+    .map((item) => {
+      const searchableWords = new Set(`${item.title} ${item.excerpt}`.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])
+      const score = queryWords.reduce((total, word) => total + (searchableWords.has(word) ? 1 : 0), 0)
+      return { item, score }
+    })
+    .filter((match) => match.score > 0)
+    .sort((left, right) => right.score - left.score)
+  const match = matches[0]
+
+  if (match) {
+    return {
+      text: `I found a reviewed draft answer: “${match.item.excerpt}”`,
+      citation: { title: match.item.title, source: match.item.source },
+    }
+  }
+
+  return {
+    text: 'I could not find a reviewed answer for that in this draft. Add or verify the relevant information in Knowledge, or direct visitors to your team.',
+    fallback: true,
+  }
+}
+
+function normalizeAllowedDomain(value: string): string | null {
+  const candidate = value.trim()
+  if (!candidate) return null
+  try {
+    const url = new URL(candidate.includes('://') ? candidate : `https://${candidate}`)
+    const hostname = url.hostname.toLowerCase()
+    if (!['http:', 'https:'].includes(url.protocol) || !hostname || !/^[a-z0-9.-]+$/.test(hostname) || hostname.includes('..')) return null
+    return hostname
+  } catch {
+    return null
+  }
+}
+
+function installTemplate(method: InstallMethod): string {
+  if (method === 'api') {
+    return [
+      'curl -X POST "https://YOUR_AGENT_HOST/api/agents/YOUR_AGENT_ID/messages" \\',
+      '  -H "Content-Type: application/json" \\',
+      `  -d '{"message":"How can I get support?"}'`,
+    ].join('\n')
+  }
+
+  const script = `<script\n  src="https://YOUR_AGENT_HOST/agent.js"\n  data-agent="YOUR_AGENT_ID"\n  async>\n</script>`
+  if (method === 'wordpress') return `<!-- Add this through your WordPress theme or a trusted script-insertion plugin -->\n${script}`
+  if (method === 'shopify') return `<!-- Add this to your Shopify theme layout before </body> -->\n${script}`
+  return script
+}
+
 function App() {
   const [workspace, setWorkspace] = useState<WorkspaceDraft>(loadWorkspace)
   const [isScanning, setIsScanning] = useState(false)
@@ -288,12 +367,16 @@ function App() {
     const behaviorChanged = key === 'role' || key === 'tone' || key === 'languages' || key === 'instructions' || key === 'boundaries'
     const capabilitiesChanged = key === 'capabilities' || key === 'leadFields' || key === 'bookingUrl' || key === 'supportContact' || key === 'quotePrompt'
     const appearanceChanged = key === 'brandName' || key === 'avatarMark' || key === 'avatarStyle' || key === 'accentColor' || key === 'widgetPlacement' || key === 'widgetStyle' || key === 'fontStyle' || key === 'welcomeMessage' || key === 'launcherText' || key === 'suggestedQuestions'
+    const deploymentChanged = key === 'allowedDomains' || key === 'installMethod'
+    const upstreamChanged = behaviorChanged || capabilitiesChanged || appearanceChanged
     setWorkspace((current) => ({
       ...current,
       [key]: value,
       ...(behaviorChanged ? { agentProfileSaved: false, capabilitiesSaved: false } : {}),
       ...(capabilitiesChanged ? { capabilitiesSaved: false } : {}),
       ...(appearanceChanged ? { designSaved: false } : {}),
+      ...(upstreamChanged ? { testRunCount: 0, publishSetupSaved: false } : {}),
+      ...(deploymentChanged ? { publishSetupSaved: false } : {}),
     }))
   }
 
@@ -320,6 +403,10 @@ function App() {
         furthestStep: 2,
         agentProfileSaved: false,
         capabilitiesSaved: false,
+        designSaved: false,
+        testRunCount: 0,
+        allowedDomains: [parsed.hostname.toLowerCase()],
+        publishSetupSaved: false,
         scanComplete: false,
         knowledgeItems: [],
       }))
@@ -345,6 +432,8 @@ function App() {
       || (step === 4 && workspace.furthestStep >= 4)
       || (step === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
       || (step === 6 && workspace.capabilitiesSaved && workspace.furthestStep >= 6)
+      || (step === 7 && workspace.designSaved && workspace.furthestStep >= 7)
+      || (step === 8 && workspace.testRunCount > 0 && workspace.furthestStep >= 8)
     if (available) navigateToStep(step)
   }
 
@@ -377,8 +466,36 @@ function App() {
 
   function saveDesign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setWorkspace((current) => ({ ...current, designSaved: true }))
-    setNotice('Appearance saved to your draft.')
+    setWorkspace((current) => ({
+      ...current,
+      currentStep: 7,
+      furthestStep: Math.max(current.furthestStep, 7) as StepNumber,
+      designSaved: true,
+    }))
+    setNotice('Appearance saved. Try a question in the playground.')
+  }
+
+  function recordTestRun() {
+    setWorkspace((current) => ({ ...current, testRunCount: current.testRunCount + 1, publishSetupSaved: false }))
+  }
+
+  function continueToPublish() {
+    if (workspace.testRunCount > 0) navigateToStep(8)
+  }
+
+  function savePublishSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setWorkspace((current) => ({ ...current, publishSetupSaved: true }))
+    setNotice('Publish settings saved locally. Nothing is live yet.')
+  }
+
+  async function copyInstallTemplate(snippet: string) {
+    try {
+      await navigator.clipboard.writeText(snippet)
+      setNotice('Installation template copied.')
+    } catch {
+      setNotice('Clipboard access is blocked. Select the template and copy it manually.')
+    }
   }
 
   function addFaq(event: FormEvent<HTMLFormElement>) {
@@ -394,7 +511,7 @@ function App() {
       excerpt: answer,
       verified: false,
     }
-    setWorkspace((current) => ({ ...current, knowledgeItems: [nextItem, ...current.knowledgeItems] }))
+    setWorkspace((current) => ({ ...current, knowledgeItems: [nextItem, ...current.knowledgeItems], testRunCount: 0, publishSetupSaved: false }))
     setNewQuestion('')
     setNewAnswer('')
     setShowFaqForm(false)
@@ -431,7 +548,7 @@ function App() {
         excerpt: content.length > 1200 ? `${preview}\n\n[Preview shortened. The prototype does not index the full file.]` : preview,
         verified: false,
       }
-      setWorkspace((current) => ({ ...current, knowledgeItems: [item, ...current.knowledgeItems] }))
+      setWorkspace((current) => ({ ...current, knowledgeItems: [item, ...current.knowledgeItems], testRunCount: 0, publishSetupSaved: false }))
       setNotice(`${file.name} added to this browser’s review list.`)
     } catch {
       setNotice('That file could not be read. Try a plain text or CSV file.')
@@ -448,6 +565,8 @@ function App() {
     if (!editDraft.title.trim() || !editDraft.excerpt.trim()) return
     setWorkspace((current) => ({
       ...current,
+      testRunCount: 0,
+      publishSetupSaved: false,
       knowledgeItems: current.knowledgeItems.map((item) =>
         item.id === itemId
           ? { ...item, title: editDraft.title.trim(), excerpt: editDraft.excerpt.trim(), verified: false }
@@ -461,6 +580,8 @@ function App() {
   function toggleVerified(itemId: string) {
     setWorkspace((current) => ({
       ...current,
+      testRunCount: 0,
+      publishSetupSaved: false,
       knowledgeItems: current.knowledgeItems.map((item) =>
         item.id === itemId ? { ...item, verified: !item.verified } : item,
       ),
@@ -470,6 +591,8 @@ function App() {
   function removeKnowledge(itemId: string) {
     setWorkspace((current) => ({
       ...current,
+      testRunCount: 0,
+      publishSetupSaved: false,
       knowledgeItems: current.knowledgeItems.filter((item) => item.id !== itemId),
     }))
     setNotice('Knowledge item removed.')
@@ -482,7 +605,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar currentStep={currentStep} furthestStep={workspace.furthestStep} selectStep={selectStep} knowledgeCount={workspace.knowledgeItems.length} />
+      <Sidebar workspace={workspace} selectStep={selectStep} knowledgeCount={workspace.knowledgeItems.length} />
       <div className="app-main">
         <Topbar website={workspace.website} />
         <main className="main-content">
@@ -560,6 +683,12 @@ function App() {
               {currentStep === 6 && (
                 <AppearancePanel workspace={workspace} updateWorkspace={updateWorkspace} saveDesign={saveDesign} />
               )}
+              {currentStep === 7 && (
+                <TestPlaygroundPanel workspace={workspace} recordTestRun={recordTestRun} continueToPublish={continueToPublish} />
+              )}
+              {currentStep === 8 && (
+                <PublishPanel workspace={workspace} updateWorkspace={updateWorkspace} savePublishSetup={savePublishSetup} copyInstallTemplate={copyInstallTemplate} />
+              )}
             </section>
 
             <aside className="secondary-column">
@@ -574,7 +703,8 @@ function App() {
   )
 }
 
-function Sidebar({ currentStep, furthestStep, selectStep, knowledgeCount }: { currentStep: StepNumber; furthestStep: StepNumber; selectStep: (step: StepNumber) => void; knowledgeCount: number }) {
+function Sidebar({ workspace, selectStep, knowledgeCount }: { workspace: WorkspaceDraft; selectStep: (step: StepNumber) => void; knowledgeCount: number }) {
+  const { currentStep, furthestStep } = workspace
   return (
     <aside className="sidebar">
       <div className="brand-row">
@@ -599,11 +729,17 @@ function Sidebar({ currentStep, furthestStep, selectStep, knowledgeCount }: { cu
         <button className={`nav-item ${currentStep === 4 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 4} onClick={() => selectStep(4)}>
           <Bot size={17} /><span>Agent behavior</span><span className="nav-count">{furthestStep >= 4 ? 'Ready' : '—'}</span>
         </button>
-        <button className={`nav-item ${currentStep === 5 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 5} onClick={() => selectStep(5)}>
+        <button className={`nav-item ${currentStep === 5 ? 'sub-active' : ''}`} type="button" disabled={!workspace.agentProfileSaved || furthestStep < 5} onClick={() => selectStep(5)}>
           <CheckCircle2 size={17} /><span>Capabilities</span><span className="nav-count">{furthestStep >= 5 ? 'Ready' : '—'}</span>
         </button>
-        <button className={`nav-item ${currentStep === 6 ? 'sub-active' : ''}`} type="button" disabled={furthestStep < 6} onClick={() => selectStep(6)}>
+        <button className={`nav-item ${currentStep === 6 ? 'sub-active' : ''}`} type="button" disabled={!workspace.capabilitiesSaved || furthestStep < 6} onClick={() => selectStep(6)}>
           <Sparkles size={17} /><span>Appearance</span><span className="nav-count">{furthestStep >= 6 ? 'Ready' : '—'}</span>
+        </button>
+        <button className={`nav-item ${currentStep === 7 ? 'sub-active' : ''}`} type="button" disabled={!workspace.designSaved || furthestStep < 7} onClick={() => selectStep(7)}>
+          <MessageCircle size={17} /><span>Test</span><span className="nav-count">{furthestStep >= 7 ? 'Ready' : '—'}</span>
+        </button>
+        <button className={`nav-item ${currentStep === 8 ? 'sub-active' : ''}`} type="button" disabled={workspace.testRunCount === 0 || furthestStep < 8} onClick={() => selectStep(8)}>
+          <Globe size={17} /><span>Publish</span><span className="nav-count">{furthestStep >= 8 ? 'Draft' : '—'}</span>
         </button>
       </nav>
 
@@ -654,6 +790,8 @@ function StepNavigation({ currentStep, workspace, selectStep }: { currentStep: S
           || (step.number === 4 && workspace.furthestStep >= 4)
           || (step.number === 5 && workspace.agentProfileSaved && workspace.furthestStep >= 5)
           || (step.number === 6 && workspace.capabilitiesSaved && workspace.furthestStep >= 6)
+          || (step.number === 7 && workspace.designSaved && workspace.furthestStep >= 7)
+          || (step.number === 8 && workspace.testRunCount > 0 && workspace.furthestStep >= 8)
         return (
           <div className="stepper-part" key={step.number}>
             <button
@@ -1233,6 +1371,174 @@ function AppearancePanel({
   )
 }
 
+function TestPlaygroundPanel({ workspace, recordTestRun, continueToPublish }: { workspace: WorkspaceDraft; recordTestRun: () => void; continueToPublish: () => void }) {
+  const [draft, setDraft] = useState('')
+  const [messages, setMessages] = useState<TestMessage[]>(() => [{
+    id: 'playground-greeting',
+    role: 'agent',
+    text: `Hi, I’m ${workspace.agentName.trim() || 'your agent'}. Ask me a question to see how this draft responds.`,
+  }])
+  const verifiedCount = workspace.knowledgeItems.filter((item) => item.verified).length
+
+  function sendQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const question = draft.trim()
+    if (!question) return
+    const response = findLocalTestAnswer(question, workspace.knowledgeItems)
+    setMessages((current) => [
+      ...current,
+      { id: crypto.randomUUID(), role: 'visitor', text: question },
+      { id: crypto.randomUUID(), role: 'agent', ...response },
+    ])
+    setDraft('')
+    recordTestRun()
+  }
+
+  function resetConversation() {
+    setMessages([{ id: crypto.randomUUID(), role: 'agent', text: `Hi, I’m ${workspace.agentName.trim() || 'your agent'}. Ask me a question to see how this draft responds.` }])
+  }
+
+  return (
+    <div className="panel-card test-panel">
+      <div className="card-topline">
+        <span className="section-kicker"><span className="kicker-number">07</span> TEST PLAYGROUND</span>
+        <button className="text-button reset-test" type="button" onClick={resetConversation}>Clear conversation</button>
+      </div>
+      <h2>Ask it something a visitor might ask.</h2>
+      <p className="panel-intro">Try a question, review the draft source, and spot what still needs a company-approved answer.</p>
+
+      <div className="prototype-note test-disclaimer"><div className="note-icon"><Search size={15} /></div><p><strong>Local demo only.</strong> Replies use simple keyword matching against verified draft knowledge. No AI model, retrieval service, or server is connected.</p></div>
+
+      {verifiedCount === 0 && <div className="test-empty-knowledge"><BookOpen size={15} /><span>There are no verified knowledge items yet. Questions will use the “no approved answer” fallback until you verify an item.</span></div>}
+
+      <div className="playground-shell">
+        <div className="playground-heading"><div className="playground-agent-mark" style={{ backgroundColor: workspace.accentColor }}><PreviewAvatar style={workspace.avatarStyle} mark={workspace.avatarMark} small /></div><div><strong>{workspace.agentName.trim() || 'Your agent'}</strong><span>Local preview · not connected</span></div><span className="test-count">{workspace.testRunCount} {workspace.testRunCount === 1 ? 'test' : 'tests'}</span></div>
+        <div className="playground-messages" aria-live="polite" aria-label="Test conversation">
+          {messages.map((message) => (
+            <article className={`playground-message ${message.role === 'visitor' ? 'visitor-message' : 'agent-message'} ${message.fallback ? 'fallback-message' : ''}`} key={message.id}>
+              <span className="playground-role">{message.role === 'visitor' ? 'YOU' : workspace.agentName.trim() || 'AGENT'}</span>
+              <p>{message.text}</p>
+              {message.citation && <div className="test-citation"><BookOpen size={13} /><div><strong>{message.citation.title}</strong><span>{message.citation.source}</span></div><span className="match-tag">LOCAL MATCH</span></div>}
+              {message.fallback && <span className="fallback-tag"><Circle size={11} /> No approved source matched</span>}
+            </article>
+          ))}
+        </div>
+        {workspace.suggestedQuestions.some((question) => question.trim()) && <div className="playground-suggestions"><span>Try a suggested question</span><div>{workspace.suggestedQuestions.filter((question) => question.trim()).map((question, index) => <button key={`${question}-${index}`} type="button" onClick={() => setDraft(question)}>{question}</button>)}</div></div>}
+        <form className="playground-compose" onSubmit={sendQuestion}>
+          <label className="visually-hidden" htmlFor="playground-question">Ask a test question</label>
+          <input id="playground-question" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask a question about this company…" maxLength={500} />
+          <button className="button-primary compact" type="submit" disabled={!draft.trim()} aria-label="Send test question"><ArrowRight size={15} /></button>
+        </form>
+      </div>
+
+      <div className="form-footer test-footer">
+        <div className="privacy-note"><ShieldCheck size={16} /><span>Questions stay in this browser session.</span></div>
+        <button className="button-primary" type="button" disabled={workspace.testRunCount === 0} onClick={continueToPublish}>{workspace.testRunCount ? 'Prepare publish settings' : 'Ask a test question first'} <ArrowRight size={16} /></button>
+      </div>
+    </div>
+  )
+}
+
+function PublishPanel({
+  workspace,
+  updateWorkspace,
+  savePublishSetup,
+  copyInstallTemplate,
+}: {
+  workspace: WorkspaceDraft
+  updateWorkspace: <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => void
+  savePublishSetup: (event: FormEvent<HTMLFormElement>) => void
+  copyInstallTemplate: (snippet: string) => void
+}) {
+  const [domainDraft, setDomainDraft] = useState('')
+  const [domainError, setDomainError] = useState('')
+  const methods: { id: InstallMethod; title: string; description: string; icon: LucideIcon }[] = [
+    { id: 'script', title: 'Website script', description: 'Add a script tag to your site.', icon: Globe },
+    { id: 'wordpress', title: 'WordPress', description: 'Add the script to your theme.', icon: BookOpen },
+    { id: 'shopify', title: 'Shopify', description: 'Add it to your storefront theme.', icon: Store },
+    { id: 'api', title: 'API', description: 'A server-side request template.', icon: ScanSearch },
+  ]
+  const snippet = installTemplate(workspace.installMethod)
+  const instructions = workspace.installMethod === 'api'
+    ? 'Use the future server endpoint from your backend. Keep private credentials on the server.'
+    : workspace.installMethod === 'wordpress'
+      ? 'Once the widget host is available, add this snippet through your WordPress theme or a trusted script-insertion plugin.'
+      : workspace.installMethod === 'shopify'
+        ? 'Once the widget host is available, add this snippet to your Shopify theme layout before the closing body tag.'
+        : 'Once the widget host is available, add this snippet to your website before the closing body tag.'
+
+  function addDomain() {
+    const domain = normalizeAllowedDomain(domainDraft)
+    if (!domain) {
+      setDomainError('Enter a valid domain, such as example.com.')
+      return
+    }
+    if (workspace.allowedDomains.includes(domain)) {
+      setDomainError('That domain is already on the allowlist.')
+      return
+    }
+    updateWorkspace('allowedDomains', [...workspace.allowedDomains, domain])
+    setDomainDraft('')
+    setDomainError('')
+  }
+
+  function removeDomain(domain: string) {
+    updateWorkspace('allowedDomains', workspace.allowedDomains.filter((item) => item !== domain))
+  }
+
+  return (
+    <div className="panel-card publish-panel">
+      <div className="card-topline">
+        <span className="section-kicker"><span className="kicker-number">08</span> PUBLISH PREPARATION</span>
+        <span className="not-live-pill"><i /> Not live</span>
+      </div>
+      <h2>Prepare the path to your website.</h2>
+      <p className="panel-intro">Choose where a future agent could be installed and which domains it should be allowed to serve.</p>
+
+      <div className="prototype-note publish-disclaimer"><div className="note-icon"><ShieldCheck size={15} /></div><p><strong>Installation is not active.</strong> These are local settings and templates. Agent Space does not yet host the widget or API, so copied templates will not run until those services exist.</p></div>
+
+      <form className="publish-form" onSubmit={savePublishSetup}>
+        <section className="publish-section" aria-labelledby="allowed-domains-heading">
+          <div className="publish-section-heading"><span className="publish-section-icon"><ShieldCheck size={15} /></span><div><strong id="allowed-domains-heading">Allowed domains</strong><small>Domain restrictions are a draft until deployment is connected.</small></div></div>
+          <div className="allowed-domain-list">
+            {workspace.allowedDomains.length ? workspace.allowedDomains.map((domain) => <div className="allowed-domain" key={domain}><span className="domain-status-dot" /><strong>{domain}</strong><span className="domain-allowed-label">Allowed</span><button className="icon-button" type="button" aria-label={`Remove ${domain}`} onClick={() => removeDomain(domain)}><X size={14} /></button></div>) : <div className="domain-empty"><Globe size={16} />Add at least one domain to prepare this draft.</div>}
+          </div>
+          <div className="domain-add-area">
+            <div className="domain-add-form">
+              <label className="visually-hidden" htmlFor="allowed-domain-input">Add an allowed domain</label>
+              <input id="allowed-domain-input" className="plain-input" type="text" value={domainDraft} onChange={(event) => { setDomainDraft(event.target.value); setDomainError('') }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addDomain() } }} placeholder="example.com" aria-invalid={Boolean(domainError)} aria-describedby={domainError ? 'domain-error' : undefined} />
+              <button className="button-secondary compact" type="button" onClick={addDomain}><Plus size={14} /> Add domain</button>
+            </div>
+            {domainError && <p id="domain-error" className="field-error">{domainError}</p>}
+          </div>
+        </section>
+
+        <section className="publish-section" aria-labelledby="install-method-heading">
+          <div className="publish-section-heading"><span className="publish-section-icon"><LayoutDashboard size={15} /></span><div><strong id="install-method-heading">Choose an install path</strong><small>Pick the template closest to your future setup.</small></div></div>
+          <div className="install-method-options" role="group" aria-label="Install method">
+            {methods.map(({ id, title, description, icon: Icon }) => <button key={id} className={`install-method-option ${workspace.installMethod === id ? 'selected' : ''}`} type="button" aria-pressed={workspace.installMethod === id} onClick={() => updateWorkspace('installMethod', id)}><span className="install-method-icon"><Icon size={16} /></span><span><strong>{title}</strong><small>{description}</small></span>{workspace.installMethod === id && <Check size={14} />}</button>)}
+          </div>
+          <p className="install-instructions">{instructions}</p>
+          <div className="snippet-heading"><span>IMPLEMENTATION TEMPLATE</span><button className="text-button" type="button" onClick={() => copyInstallTemplate(snippet)}>Copy template</button></div>
+          <pre className="install-snippet"><code>{snippet}</code></pre>
+        </section>
+
+        <div className="publish-readiness">
+          <div className="readiness-heading"><strong>Publish checklist</strong><span>{workspace.publishSetupSaved ? 'Draft settings saved' : 'Preparation only'}</span></div>
+          <div className="readiness-item"><span className={workspace.designSaved ? 'ready' : ''}>{workspace.designSaved ? <Check size={12} /> : '1'}</span><div><strong>Agent appearance</strong><small>{workspace.designSaved ? 'Draft design saved' : 'Return to Design it'}</small></div></div>
+          <div className="readiness-item"><span className={workspace.testRunCount > 0 ? 'ready' : ''}>{workspace.testRunCount > 0 ? <Check size={12} /> : '2'}</span><div><strong>Test question</strong><small>{workspace.testRunCount ? `${workspace.testRunCount} local test${workspace.testRunCount === 1 ? '' : 's'} run` : 'Run a question in the playground'}</small></div></div>
+          <div className="readiness-item"><span className={workspace.allowedDomains.length > 0 ? 'ready' : ''}>{workspace.allowedDomains.length > 0 ? <Check size={12} /> : '3'}</span><div><strong>Allowed domain</strong><small>{workspace.allowedDomains.length ? `${workspace.allowedDomains.length} domain${workspace.allowedDomains.length === 1 ? '' : 's'} added` : 'Add a domain above'}</small></div></div>
+        </div>
+
+        <div className="form-footer publish-footer">
+          <div className="privacy-note"><LockKeyhole size={15} /><span>Saving does not publish or enable access.</span></div>
+          <button className="button-primary" type="submit" disabled={workspace.allowedDomains.length === 0}>Save publish settings <Check size={16} /></button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return <button className={`filter-tab ${active ? 'active' : ''}`} type="button" role="tab" aria-selected={active} onClick={onClick}>{children}</button>
 }
@@ -1267,7 +1573,7 @@ function AgentPreview({ workspace, currentStep }: { workspace: WorkspaceDraft; c
         <div className="chat-input-preview"><span>Ask me anything...</span><div><ArrowRight size={13} /></div></div>
         <div className="preview-disclaimer"><Sparkles size={12} /> Example preview · no live AI connected</div>
       </div>
-      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : currentStep === 4 ? `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.` : currentStep === 5 ? 'Capabilities are draft settings. No external actions are connected.' : 'Appearance changes update this sample preview only. Nothing is published.'}</span></div>
+      <div className="preview-note"><span className="preview-note-dot" /><span>{currentStep === 1 ? 'Your live preview updates as you set things up.' : currentStep === 2 ? 'A sample of how your agent could appear on your site.' : currentStep === 3 ? 'Your reviewed knowledge will guide the real answers.' : currentStep === 4 ? `A ${workspace.tone} voice, set to ${workspace.languages.length || 'no'} ${workspace.languages.length === 1 ? 'language' : 'languages'}.` : currentStep === 5 ? 'Capabilities are draft settings. No external actions are connected.' : currentStep === 6 ? 'Appearance changes update this sample preview only. Nothing is published.' : currentStep === 7 ? 'Test answers use local keyword matching over reviewed content.' : 'Publish settings and code are templates only. The agent is not live.'}</span></div>
     </div>
   )
 }
@@ -1279,6 +1585,8 @@ function SetupChecklist({ workspace, completedReviews }: { workspace: WorkspaceD
   const behaviorReady = workspace.agentProfileSaved
   const capabilitiesReady = workspace.capabilitiesSaved
   const designReady = workspace.designSaved
+  const testReady = workspace.testRunCount > 0
+  const publishReady = workspace.publishSetupSaved
   const rows = [
     { title: 'Company details', detail: websiteAdded ? hostFromUrl(workspace.website) : 'Add your website', done: websiteAdded },
     { title: 'Sample discovery', detail: scanReady ? 'Preview ready' : 'Waiting for website', done: scanReady },
@@ -1286,6 +1594,8 @@ function SetupChecklist({ workspace, completedReviews }: { workspace: WorkspaceD
     { title: 'Agent behavior', detail: behaviorReady ? 'Profile saved' : 'Set voice and boundaries', done: behaviorReady },
     { title: 'Capabilities', detail: capabilitiesReady ? `${workspace.capabilities.length} enabled · draft only` : 'Optional · not configured', done: capabilitiesReady },
     { title: 'Appearance', detail: designReady ? 'Design saved' : 'Set brand and widget', done: designReady },
+    { title: 'Test', detail: testReady ? `${workspace.testRunCount} local test${workspace.testRunCount === 1 ? '' : 's'} run` : 'Try a visitor question', done: testReady },
+    { title: 'Publish prep', detail: publishReady ? 'Settings saved · not live' : 'Choose a channel and domain', done: publishReady },
   ]
   return (
     <div className="checklist-card">
